@@ -1,0 +1,26 @@
+[package]
+name = "lib_oblivion"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "Oblivion"
+crate-type = ["cdylib"]
+
+
+[dependencies]
+rustls = { version = "0.23.27", default-features = false, features = ["std"] }
+argh = "0.1.1"
+futures-util = "0.3.1"
+lazy_static = "1.1"
+rcgen = { version = "0.14", features = ["pem"] }
+tokio = { version = "1.0", features = ["full"] }
+webpki-roots = "1"
+tokio-rustls = "0.26.3"
+jni = "0.21.1"
+log = "0.4"
+android_logger = "0.11"
+bincode = "2.0.1"
+pq_tls = { version = "0.1.0", path = "src/pq_tls" }
+sqlx = { version = "0.8.3", features = ["sqlite", "runtime-tokio", "chrono"] }
+ed25519-dalek = "2.1.1"

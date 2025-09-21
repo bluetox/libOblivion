@@ -1,0 +1,38 @@
+[package]
+name = "pq_tls"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rand = "0.8"
+hkdf = "0.12"            # Or latest
+sha2 = "0.10"   
+ed25519-dalek = "2.1.1"
+x25519-dalek = "2.0.1"
+frodo-kem = "0.0.1"
+chacha20 = "0.9"
+cipher = "0.4"
+
+sqlx = { version = "0.8.3", features = ["sqlite", "runtime-tokio", "chrono"] }
+chrono = "0.4.41"
+blake3 = "1.8.2"
+bincode = "2.0.1"
+serde = "1.0.219"
+pqcrypto = "0.18.1"
+rustls = { version = "0.23.27", default-features = false, features = ["std"] }
+argh = "0.1.1"
+futures-util = "0.3.1"
+lazy_static = "1.1"
+rcgen = { version = "0.14", features = ["pem"] }
+tokio = { version = "1.0", features = ["full"] }
+webpki-roots = "1"
+log = "0.4"
+tokio-rustls = "0.26.3"
+
+[profile.dev]
+opt-level = 0          # No optimization = faster compile
+debug = true
+split-debuginfo = 'unpacked'
+incremental = true     # Enable incremental builds
+codegen-units = 256    # Max parallelism = fastest build
+overflow-checks = false

@@ -1,27 +1,26 @@
-
-use std::error::Error as StdError;
-use std::io;
-use std::net::ToSocketAddrs;
-use std::sync::Arc;
 use base64::Engine;
 use bincode::{Decode, Encode};
+use jni::JNIEnv;
+use jni::objects::GlobalRef;
+use jni::objects::{JClass, JString};
+use jni::sys::{jint, jobject, jstring};
 use pq_tls::objects::{Ed25519Keypair, FrodoKem1344Keypair, PqTlsSettings, X25519Keypair};
 use pq_tls::sign_obj::{Falcon1024Keypair, FalconPadded1024Keypair};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName};
-use tokio::io::{copy, split, stdin as tokio_stdin, stdout as tokio_stdout, AsyncWriteExt};
+use std::error::Error as StdError;
+use std::io;
+use std::net::ToSocketAddrs;
+use std::sync::Arc;
+use tokio::io::{AsyncWriteExt, copy, split, stdin as tokio_stdin, stdout as tokio_stdout};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
-use tokio_rustls::{rustls, TlsConnector};
-use jni::objects::GlobalRef;
-use jni::JNIEnv;
-use jni::objects::{JClass, JString};
-use jni::sys::{jint, jobject, jstring};
+use tokio_rustls::{TlsConnector, rustls};
 
 use jni::objects::{JObject, JValue};
 use lazy_static::lazy_static;
-use std::sync::Mutex;
 use pq_tls::client::PqTlsClient;
+use std::sync::Mutex;
 
 mod database;
 
@@ -48,7 +47,8 @@ fn notify_new_message(env: &mut JNIEnv, message: &str) {
             "onNewMessage",
             "(Ljava/lang/String;)V",
             &[JValue::Object(&java_str.into())],
-        ).unwrap();
+        )
+        .unwrap();
     }
 }
 
@@ -83,13 +83,11 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_init(
     _class: JObject,
     db_path: JString,
     callback: JObject,
-) {
+) -> jint {
     let global = env.new_global_ref(callback).unwrap();
     *CALLBACK.lock().unwrap() = Some(global);
 
-    android_logger::init_once(
-    android_logger::Config::default().with_min_level(log::Level::Info)
-    );
+    android_logger::init_once(android_logger::Config::default().with_min_level(log::Level::Info));
     std::panic::set_hook(Box::new(|info| {
         log::error!("panic: {:?}", info);
     }));
@@ -97,16 +95,17 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_init(
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(_) => {
-            return;
+            return -1;
         }
     };
 
-    let db_path: String = env.get_string(&db_path)
+    let db_path: String = env
+        .get_string(&db_path)
         .expect("Couldn't get Java string!")
         .into();
 
-
-    if let Err(_) = rt.block_on(async { database::init_db(db_path.clone()).await }) {
+    if let Err(e) = rt.block_on(async { database::init_db(db_path.clone()).await }) {
+        return -1;
     }
 
     //run_client();
@@ -119,7 +118,8 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_init(
             std::thread::sleep(tokio::time::Duration::from_millis(500));
         }
     });
-} 
+    return 0;
+}
 use log::error;
 use log::info;
 #[unsafe(no_mangle)]
@@ -128,17 +128,20 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_createProfile(
     _class: JObject,
     password: JString,
     username: JString,
-) {    let rt = match tokio::runtime::Runtime::new() {
+) {
+    let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(_) => {
             return;
         }
     };
 
-    let password: String = env.get_string(&password)
+    let password: String = env
+        .get_string(&password)
         .expect("Couldn't get Java string!")
         .into();
-    let username: String = env.get_string(&username)
+    let username: String = env
+        .get_string(&username)
         .expect("Couldn't get Java string!")
         .into();
 
@@ -146,11 +149,9 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_createProfile(
     if res.is_err() {
         info!("create table error: {:?}", res);
     }
-    
 }
-    
-fn run_client(
-) -> jint {
+
+fn run_client() -> jint {
     android_logger::init_once(android_logger::Config::default().with_min_level(log::Level::Info));
 
     let rt = match tokio::runtime::Runtime::new() {
@@ -163,12 +164,16 @@ fn run_client(
     rt.block_on(async {
         let stream = client().await.unwrap();
         let mut settings = PqTlsSettings {
-            pq_signing_keys: pq_tls::objects::PqSigningKeys::FalconPadded1024(FalconPadded1024Keypair::generate()),
+            pq_signing_keys: pq_tls::objects::PqSigningKeys::FalconPadded1024(
+                FalconPadded1024Keypair::generate(),
+            ),
             c_signing_keys: pq_tls::objects::CSigningKeys::Ed25519(Ed25519Keypair::generate()),
             pq_aka_keys: pq_tls::objects::PqAKAKeys::FrodoKem1344(FrodoKem1344Keypair::generate()),
-            c_aka_keys: pq_tls::objects::CAKAKeys::X25519(X25519Keypair::generate())
+            c_aka_keys: pq_tls::objects::CAKAKeys::X25519(X25519Keypair::generate()),
         };
-        let client = pq_tls::client::PqTlsClient::new(stream, &mut settings).await.unwrap();
+        let client = pq_tls::client::PqTlsClient::new(stream, &mut settings)
+            .await
+            .unwrap();
         set_stream(client);
     });
     return 0;
@@ -179,13 +184,15 @@ use std::error::Error;
 pub extern "system" fn Java_com_example_oblivion_RustBridge_getProfiles(
     env: JNIEnv,
     _class: JObject,
-) -> jstring {    let rt = match tokio::runtime::Runtime::new() {
+) -> jstring {
+    let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(_) => {
             panic!()
         }
     };
-    let res: Result<Vec<database::Profile>, Box<dyn Error + Send + Sync>> = rt.block_on(async { database::get_all_profiles().await });
+    let res: Result<Vec<database::Profile>, Box<dyn Error + Send + Sync>> =
+        rt.block_on(async { database::get_all_profiles().await });
     if res.is_err() {
         info!("Error fetching profiles: {:?}", res);
     }
@@ -196,7 +203,6 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_getProfiles(
     let json = serde_json::to_string(&profiles).unwrap();
     let output = env.new_string(json).unwrap();
     output.into_raw()
-    
 }
 
 #[unsafe(no_mangle)]
@@ -204,30 +210,63 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_loadWithProfile(
     mut env: JNIEnv,
     _class: JObject,
     user_id: JString,
-    password: JString
-
-) -> jint {    
-    
+    password: JString,
+) -> jint {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(_) => {
             panic!()
         }
     };
-    let user_id_str: String = env.get_string(&user_id)
+    let user_id_str: String = env
+        .get_string(&user_id)
         .expect("Couldn't get userId string")
         .into();
-    let password_str: String = env.get_string(&password)
+    let password_str: String = env
+        .get_string(&password)
         .expect("Couldn't get password string")
         .into();
     let user_id_bytes = decode_b64(&user_id_str).expect("Couldn't decode b64");
-    let res = rt.block_on(async { database::load_with_profile(&user_id_bytes, &password_str).await });
+    let res =
+        rt.block_on(async { database::load_with_profile(&user_id_bytes, &password_str).await });
     if res.is_err() {
         info!("Error fetching profiles: {:?}", res);
         return -1;
     }
     return 0;
 }
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_example_oblivion_RustBridge_createChat(
+    mut env: JNIEnv,
+    _class: JObject,
+    user_id: JString,
+    chat_name: JString,
+) -> jint {
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(_) => {
+            panic!()
+        }
+    };
+    let user_id_str: String = env
+        .get_string(&user_id)
+        .expect("Couldn't get userId string")
+        .into();
+    let chat_name_str: String = env
+        .get_string(&chat_name)
+        .expect("Couldn't get password string")
+        .into();
+    let user_id_bytes = decode_b64(&user_id_str).expect("Couldn't decode b64");
+    let res =
+        rt.block_on(async { database::create_chat(&user_id_bytes, &chat_name_str).await });
+    if res.is_err() {
+        info!("Error fetching profiles: {:?}", res);
+        return -1;
+    }
+    return 0;
+}
+
 use base64::engine::general_purpose;
 fn decode_b64(string: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     general_purpose::STANDARD

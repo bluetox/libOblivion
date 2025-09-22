@@ -255,3 +255,28 @@ pub async fn create_chat(
     info!("New chat {} created", chat_name);
     Ok(())
 }
+
+pub async fn get_chats() -> Result<Vec<(Vec<u8>, String)>, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = get_pool()?;
+    let session_guard = GLOBAL_OBLIVION_SESSION.lock().unwrap();
+    let session = session_guard.as_ref().ok_or("No session available")?;
+    let profile_id = &session.user_id;
+
+    // Query all chats for the current profile
+    let rows = sqlx::query("SELECT idDest, name FROM chats WHERE idReceiver = ? ORDER BY updatedAt DESC")
+        .bind(profile_id)
+        .fetch_all(&pool)
+        .await?;
+
+    // Map results into Vec<(destination_id, chat_name)>
+    let chats = rows
+        .into_iter()
+        .map(|row| {
+            let id_dest: Vec<u8> = row.try_get("idDest").unwrap_or_default();
+            let name: String = row.try_get("name").unwrap_or_default();
+            (id_dest, name)
+        })
+        .collect();
+
+    Ok(chats)
+}

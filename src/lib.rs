@@ -10,6 +10,8 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName};
 use std::error::Error as StdError;
 use std::io;
+use log::error;
+use log::info;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, copy, split, stdin as tokio_stdin, stdout as tokio_stdout};
@@ -120,8 +122,7 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_init(
     });
     return 0;
 }
-use log::error;
-use log::info;
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_oblivion_RustBridge_createProfile(
     mut env: JNIEnv,
@@ -266,7 +267,52 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_createChat(
     }
     return 0;
 }
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_example_oblivion_RustBridge_getChats(
+    env: JNIEnv,
+    _class: JObject,
+) -> jstring {
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(_) => {
+            panic!()
+        }
+    };
+    let res: Result<Vec<(Vec<u8>, std::string::String)>, Box<dyn Error + Send + Sync>> =
+        rt.block_on(async { database::get_chats().await });
+    if res.is_err() {
+        info!("Error fetching profiles: {:?}", res);
+    }
+let chats_json = match res {
+        Ok(chats) => {
+            // Convert each chat to a serializable struct
+            #[derive(serde::Serialize)]
+            struct ChatExport {
+                dest_id_b64: String,
+                name: String,
+            }
 
+            let exported: Vec<ChatExport> = chats
+                .into_iter()
+                .map(|(id_dest, name)| ChatExport {
+                    dest_id_b64: base64::engine::general_purpose::STANDARD.encode(id_dest),
+                    name,
+                })
+                .collect();
+
+            serde_json::to_string(&exported).unwrap_or("[]".to_string())
+        }
+        Err(e) => {
+            log::error!("Error fetching chats: {:?}", e);
+            "[]".to_string()
+        }
+    };
+
+    // Return as Java string
+    env.new_string(chats_json)
+        .expect("Failed to create jstring")
+        .into_raw()
+}
 use base64::engine::general_purpose;
 fn decode_b64(string: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     general_purpose::STANDARD

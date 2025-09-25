@@ -1,0 +1,9 @@
+[package]
+name = "kyber"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+kyber512 = { version = "0.6.3", path = "kyber512", features=["kyber512", "zeroize"] }
+kyber768 = { version = "0.6.3", path = "kyber768", features=["kyber768", "zeroize"] }
+kyber1024 = { version = "0.6.3", path = "kyber1024", features=["kyber1024", "zeroize"] }

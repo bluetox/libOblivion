@@ -1,6 +1,7 @@
 use base64::{Engine, engine::general_purpose};
 use lazy_static::lazy_static;
 use log::{error, info};
+use rand::Rng;
 use serde::Serialize;
 use sqlx::{Pool, Row, Sqlite, sqlite::SqlitePoolOptions};
 use std::path::Path;
@@ -10,7 +11,7 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref GLOBAL_OBLIVION_SESSION: Mutex<Option<OblivionSession>> = Mutex::new(None);
+    pub static ref GLOBAL_OBLIVION_SESSION: Mutex<Option<OblivionSession>> = Mutex::new(None);
 }
 #[derive(Debug)]
 pub struct Ed25519Keypair {
@@ -140,8 +141,7 @@ pub async fn create_profile(
     username: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut seed = [0u8; 32];
-    rand::fill(&mut seed);
-
+    rand::rngs::OsRng.fill(&mut seed);
     let pool = get_pool()?;
 
     let ml_algo = pure_dsa::Algorithm::Mode5;

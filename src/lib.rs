@@ -1,45 +1,27 @@
 use base64::Engine;
-use bincode::{Decode, Encode};
 use jni::JNIEnv;
 use jni::objects::GlobalRef;
-use jni::objects::{JClass, JString};
-use jni::sys::{jint, jobject, jstring};
-use pq_tls::objects::{Ed25519Keypair, FrodoKem1344Keypair, PqTlsSettings, X25519Keypair};
-use pq_tls::sign_obj::{Falcon1024Keypair, FalconPadded1024Keypair};
-use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, ServerName};
-use std::error::Error as StdError;
-use std::io;
-use log::error;
+use jni::objects::JString;
+use jni::sys::{jint, jstring};
 use log::info;
-use std::net::ToSocketAddrs;
-use std::sync::Arc;
-use tokio::io::{AsyncWriteExt, copy, split, stdin as tokio_stdin, stdout as tokio_stdout};
-use tokio::net::TcpStream;
-use tokio_rustls::client::TlsStream;
-use tokio_rustls::{TlsConnector, rustls};
-
+use std::error::Error;
+use std::net;
 use jni::objects::{JObject, JValue};
 use lazy_static::lazy_static;
-use pq_tls::client::PqTlsClient;
 use std::sync::Mutex;
+use zeroizing_alloc::ZeroAlloc;
 
 mod database;
+mod network;
 
-static CERT_PEM: &[u8] = include_bytes!("cert.pem");
-
-lazy_static! {
-    static ref GLOBAL_STREAM: Mutex<Option<PqTlsClient>> = Mutex::new(None);
-}
+#[global_allocator]
+static ALLOC: ZeroAlloc<std::alloc::System> = ZeroAlloc(std::alloc::System);
 
 lazy_static! {
     static ref CALLBACK: Mutex<Option<GlobalRef>> = Mutex::new(None);
 }
 
-pub fn set_stream(stream: PqTlsClient) {
-    let mut global = GLOBAL_STREAM.lock().unwrap();
-    *global = Some(stream);
-}
+
 
 fn notify_new_message(env: &mut JNIEnv, message: &str) {
     if let Some(callback) = &*CALLBACK.lock().unwrap() {
@@ -54,30 +36,7 @@ fn notify_new_message(env: &mut JNIEnv, message: &str) {
     }
 }
 
-async fn client() -> Result<TlsStream<TcpStream>, Box<dyn StdError + Send + Sync + 'static>> {
-    let addr = ("192.168.1.230", 443)
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
 
-    let domain = "localhost";
-
-    let mut root_cert_store = rustls::RootCertStore::empty();
-    for cert in CertificateDer::pem_slice_iter(CERT_PEM) {
-        root_cert_store.add(cert?)?;
-    }
-
-    let config = rustls::ClientConfig::builder()
-        .with_root_certificates(root_cert_store)
-        .with_no_client_auth();
-    let connector = TlsConnector::from(Arc::new(config));
-
-    let stream = TcpStream::connect(&addr).await?;
-
-    let domain = ServerName::try_from(domain)?.to_owned();
-    let stream = connector.connect(domain, stream).await?;
-    Ok(stream)
-}
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_oblivion_RustBridge_init(
@@ -152,35 +111,6 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_createProfile(
     }
 }
 
-fn run_client() -> jint {
-    android_logger::init_once(android_logger::Config::default().with_min_level(log::Level::Info));
-
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            return -1;
-        }
-    };
-
-    rt.block_on(async {
-        let stream = client().await.unwrap();
-        let mut settings = PqTlsSettings {
-            pq_signing_keys: pq_tls::objects::PqSigningKeys::FalconPadded1024(
-                FalconPadded1024Keypair::generate(),
-            ),
-            c_signing_keys: pq_tls::objects::CSigningKeys::Ed25519(Ed25519Keypair::generate()),
-            pq_aka_keys: pq_tls::objects::PqAKAKeys::FrodoKem1344(FrodoKem1344Keypair::generate()),
-            c_aka_keys: pq_tls::objects::CAKAKeys::X25519(X25519Keypair::generate()),
-        };
-        let client = pq_tls::client::PqTlsClient::new(stream, &mut settings)
-            .await
-            .unwrap();
-        set_stream(client);
-    });
-    return 0;
-}
-use std::error::Error;
-
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_example_oblivion_RustBridge_getProfiles(
     env: JNIEnv,
@@ -229,11 +159,14 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_loadWithProfile(
         .into();
     let user_id_bytes = decode_b64(&user_id_str).expect("Couldn't decode b64");
     let res =
-        rt.block_on(async { database::load_with_profile(&user_id_bytes, &password_str).await });
+        rt.block_on(async { 
+            database::load_with_profile(&user_id_bytes, &password_str).await 
+        });
     if res.is_err() {
         info!("Error fetching profiles: {:?}", res);
         return -1;
     }
+    network::init_connexion();
     return 0;
 }
 

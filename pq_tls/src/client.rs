@@ -8,6 +8,8 @@ use tokio::sync::Mutex;
 use std::path::PathBuf;
 use crate::{constants::*, objects::*, utils, settings, crypto};
 use tokio_rustls::client::TlsStream;
+
+#[derive(Clone)]
 pub struct PqTlsClient {
     pub writer: Arc<Mutex<WriteHalf<TlsStream<TcpStream>>>>,
     pub rx: Arc<Mutex<Receiver<Vec<u8>>>>,

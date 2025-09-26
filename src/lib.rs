@@ -4,6 +4,7 @@ use jni::objects::GlobalRef;
 use jni::objects::JString;
 use jni::sys::{jint, jstring};
 use log::info;
+use serde::Serialize;
 use std::error::Error;
 use std::net;
 use jni::objects::{JObject, JValue};
@@ -21,7 +22,9 @@ lazy_static! {
     static ref CALLBACK: Mutex<Option<GlobalRef>> = Mutex::new(None);
 }
 
-
+lazy_static! {
+    static ref TOKIO_RT: tokio::runtime::Runtime = tokio::runtime::Runtime::new().unwrap();
+}
 
 fn notify_new_message(env: &mut JNIEnv, message: &str) {
     if let Some(callback) = &*CALLBACK.lock().unwrap() {
@@ -53,32 +56,17 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_init(
         log::error!("panic: {:?}", info);
     }));
 
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(_) => {
-            return -1;
-        }
-    };
+    
 
     let db_path: String = env
         .get_string(&db_path)
         .expect("Couldn't get Java string!")
         .into();
 
-    if let Err(e) = rt.block_on(async { database::init_db(db_path.clone()).await }) {
+    if let Err(e) = TOKIO_RT.block_on(async { database::init_db(db_path.clone()).await }) {
         return -1;
     }
 
-    //run_client();
-
-    let java_vm = env.get_java_vm().unwrap();
-    std::thread::spawn(move || {
-        loop {
-            let mut env = java_vm.attach_current_thread().unwrap();
-            notify_new_message(&mut env, "Hi josh sup ?");
-            std::thread::sleep(tokio::time::Duration::from_millis(500));
-        }
-    });
     return 0;
 }
 
@@ -89,12 +77,6 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_createProfile(
     password: JString,
     username: JString,
 ) {
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(_) => {
-            return;
-        }
-    };
 
     let password: String = env
         .get_string(&password)
@@ -105,7 +87,7 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_createProfile(
         .expect("Couldn't get Java string!")
         .into();
 
-    let res = rt.block_on(async { database::create_profile(&password, &username).await });
+    let res = TOKIO_RT.block_on(async { database::create_profile(&password, &username).await });
     if res.is_err() {
         info!("create table error: {:?}", res);
     }
@@ -122,14 +104,14 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_getProfiles(
             panic!()
         }
     };
-    let res: Result<Vec<database::Profile>, Box<dyn Error + Send + Sync>> =
+    let res: Result<Vec<ProfileExported>, Box<dyn Error + Send + Sync>> =
         rt.block_on(async { database::get_all_profiles().await });
     if res.is_err() {
         info!("Error fetching profiles: {:?}", res);
     }
     let mut profiles = Vec::new();
     for profile in res.unwrap() {
-        profiles.push(profile.export());
+        profiles.push(profile);
     }
     let json = serde_json::to_string(&profiles).unwrap();
     let output = env.new_string(json).unwrap();
@@ -143,12 +125,6 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_loadWithProfile(
     user_id: JString,
     password: JString,
 ) -> jint {
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(_) => {
-            panic!()
-        }
-    };
     let user_id_str: String = env
         .get_string(&user_id)
         .expect("Couldn't get userId string")
@@ -159,7 +135,7 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_loadWithProfile(
         .into();
     let user_id_bytes = decode_b64(&user_id_str).expect("Couldn't decode b64");
     let res =
-        rt.block_on(async { 
+        TOKIO_RT.block_on(async { 
             database::load_with_profile(&user_id_bytes, &password_str).await 
         });
     if res.is_err() {
@@ -177,12 +153,6 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_createChat(
     user_id: JString,
     chat_name: JString,
 ) -> jint {
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(_) => {
-            panic!()
-        }
-    };
     let user_id_str: String = env
         .get_string(&user_id)
         .expect("Couldn't get userId string")
@@ -193,7 +163,7 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_createChat(
         .into();
     let user_id_bytes = decode_b64(&user_id_str).expect("Couldn't decode b64");
     let res =
-        rt.block_on(async { database::create_chat(&user_id_bytes, &chat_name_str).await });
+        TOKIO_RT.block_on(async { database::create_chat(&user_id_bytes, &chat_name_str).await });
     if res.is_err() {
         info!("Error fetching profiles: {:?}", res);
         return -1;
@@ -205,14 +175,8 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_getChats(
     env: JNIEnv,
     _class: JObject,
 ) -> jstring {
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(_) => {
-            panic!()
-        }
-    };
     let res: Result<Vec<(Vec<u8>, std::string::String)>, Box<dyn Error + Send + Sync>> =
-        rt.block_on(async { database::get_chats().await });
+        TOKIO_RT.block_on(async { database::get_chats().await });
     if res.is_err() {
         info!("Error fetching profiles: {:?}", res);
     }
@@ -247,8 +211,59 @@ let chats_json = match res {
         .into_raw()
 }
 use base64::engine::general_purpose;
+
+use crate::database::ProfileExported;
 fn decode_b64(string: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     general_purpose::STANDARD
         .decode(string)
         .map_err(|_| "Invalid base64".into())
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_example_oblivion_RustBridge_getCurrentProfile(
+    env: JNIEnv,
+    _class: JObject,
+) -> jstring {
+    let res=
+        TOKIO_RT.block_on(async { database::get_current_profile().await });
+    if res.is_err() {
+        info!("Error fetching profiles: {:?}", res);
+    }
+    let json = serde_json::to_string(&res.unwrap()).unwrap();
+    let output = env.new_string(json).unwrap();
+    output.into_raw()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_example_oblivion_RustBridge_sendMessage(
+    mut env: JNIEnv,
+    _class: JObject,
+    user_id_b64: JString,
+    message: JString
+) -> jint {
+    // Convert JStrings safely
+    let user_id_b64: String = match env.get_string(&user_id_b64) {
+        Ok(s) => s.into(),
+        Err(_) => return -1, // invalid JString
+    };
+
+    let message: String = match env.get_string(&message) {
+        Ok(s) => s.into(),
+        Err(_) => return -2, // invalid JString
+    };
+
+    // Decode Base64 safely
+    let user_id = match decode_b64(&user_id_b64) {
+        Ok(bytes) => bytes,
+        Err(_) => return -3, // invalid base64
+    };
+
+    // Run async sending safely
+    TOKIO_RT.spawn(async move {
+        if let Err(e) = network::send_new_message(user_id, &message).await {
+            info!("send_new_message error: {}", e);
+        }
+    });
+
+    0
 }

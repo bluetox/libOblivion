@@ -2,6 +2,7 @@ use pq_tls::objects::{Ed25519Keypair, FrodoKem1344Keypair, PqTlsSettings, X25519
 use pq_tls::sign_obj::{Falcon1024Keypair, FalconPadded1024Keypair};
 use ed25519_dalek::ed25519::signature::{SignerMut};
 use rustls::pki_types::{CertificateDer, ServerName};
+use std::fmt::format;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use tokio_rustls::{TlsConnector, rustls};
 use rustls::pki_types::pem::PemObject;
@@ -267,4 +268,41 @@ fn create_atomic_key_packet(id: u64) -> Vec<u8> {
     packet.extend_from_slice(&sign_part);
 
     packet
+}
+
+fn create_send_message_packet(dst_user_id: Vec<u8>, message: &str) -> Vec<u8> {
+    let mut packet: Vec<u8> = Vec::new();
+    let mut header = [0u8; PACKET_HEADER_SIZE];
+    header[0] = 0x10; // Message idk
+    
+    let mut session_guard = database::GLOBAL_OBLIVION_SESSION.lock().unwrap();
+    let session = session_guard.as_mut().expect("Session not initialized");
+
+    let mut sign_part = Vec::new();
+    sign_part.extend_from_slice(&dst_user_id);
+
+    let ml_dsa_sign = session.ml_dsa_keypair.sign(&sign_part);
+    let ed_sign = session.ed25519_keypair.secret.sign(&sign_part);
+
+    packet.extend_from_slice(&header);
+    packet.extend_from_slice(&ed_sign.to_bytes());        // 64B
+    packet.extend_from_slice(ml_dsa_sign.bytes());        // 4595B
+    packet.extend_from_slice(&sign_part);
+
+    packet
+}
+
+
+pub async fn send_new_message(dst_user_id: Vec<u8>, message: &str) -> Result<(), String> {
+    // Convert get_stream() error to String
+    let stream = get_stream().map_err(|e| format!("Failed to get stream: {}", e))?;
+
+    let packet = create_send_message_packet(dst_user_id, message);
+
+    // Convert write() error to String
+    stream.write(&packet)
+        .await
+        .map_err(|e| format!("Error writing to socket: {}", e))?;
+
+    Ok(())
 }

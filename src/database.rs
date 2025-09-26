@@ -168,7 +168,7 @@ pub async fn create_profile(
     Ok(())
 }
 
-pub async fn get_all_profiles() -> Result<Vec<Profile>, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn get_all_profiles() -> Result<Vec<ProfileExported>, Box<dyn std::error::Error + Send + Sync>> {
     let pool = get_pool()?;
 
     let rows = sqlx::query("SELECT userId, username, seed, pwdHash, createdAt FROM profiles")
@@ -177,17 +177,38 @@ pub async fn get_all_profiles() -> Result<Vec<Profile>, Box<dyn std::error::Erro
 
     let profiles = rows
         .into_iter()
-        .map(|row| Profile {
-            user_id: row.get::<Vec<u8>, _>("userId"),
+        .map(|row| ProfileExported {
+            user_id: encode_bytes(&row.get::<Vec<u8>, _>("userId")),
             username: row.get::<String, _>("username"),
-            seed: row.get::<Vec<u8>, _>("seed"),
-            pwd_hash: row.get::<Vec<u8>, _>("pwdHash"),
             created_at: row.get::<String, _>("createdAt"),
         })
         .collect();
 
     Ok(profiles)
 }
+pub async fn get_current_profile() -> Result<ProfileExported, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = get_pool()?;
+
+    let session_guard= GLOBAL_OBLIVION_SESSION.lock().unwrap();
+    let session = session_guard.as_ref().unwrap();
+    let user_id = &session.user_id;
+    let row = sqlx::query("SELECT username, createdAt FROM profiles WHERE userId = ?")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await?;
+
+    let username = row.get::<String, _>("username");
+    let created_at= row.get::<String, _>("createdAt");
+
+    let profile = ProfileExported {
+        user_id: encode_bytes(&user_id),
+        username,
+        created_at
+    };
+
+    Ok(profile)
+}
+
 
 pub async fn load_with_profile(
     user_id: &[u8],

@@ -99,7 +99,9 @@ pub fn init_connexion() -> jint {
         loop {
             let auth_response = client.pull_packet().await.unwrap();
             match auth_response[0] {
-                0 => break,
+                0 => {
+                    break;
+                },
                 1 => panic!(),
                 2 => {
                     info!("Send Long terme Keys first auth");
@@ -108,19 +110,29 @@ pub fn init_connexion() -> jint {
                 },
                 3 => {
                     info!("Ephemeral Keys needed");
+
                     let packet = create_ephemeral_key_packet();
+                    println!("Wrote");
                     client.write(&packet).await.unwrap();
                 },
                 4 => {
                     info!("Refresh of Atomic keys needed, amount");
+                    let num: [u8; 8] = auth_response[1..9]
+                            .try_into()
+                            .map_err(|e| format!("Error: {}", e)).unwrap();
+                    for i in 0..u64::from_be_bytes(num) {
+                        let packet = create_atomic_key_packet(i);
+                        client.write(&packet).await.unwrap();
+                    }
                     
                 }
-                _ => {info!("Big error")}
+                _ => panic!()
             }
         }
 
         set_stream(client);
     });
+    println!("Connexion initialised");
     return 0;
 }
 
@@ -201,7 +213,38 @@ fn create_ephemeral_key_packet() -> Vec<u8> {
 
     let mut packet: Vec<u8> = Vec::new();
     let mut header = [0u8; PACKET_HEADER_SIZE];
-    header[0] = 3; // ephemeral tag
+    header[0] = 3;
+
+    let mut rng = OsRng;
+
+    let kyber_keypair = kyber::kyber1024::keypair(&mut rng, None);
+
+    let mut session_guard = database::GLOBAL_OBLIVION_SESSION.lock().unwrap();
+    let session = session_guard.as_mut().expect("Session not initialized");
+
+    let kyber_pk = &kyber_keypair.public;
+
+    let mut sign_part = Vec::new();
+    sign_part.extend_from_slice(kyber_pk);                   // 1568B
+    sign_part.extend_from_slice(&ts_bytes);                  // 8B
+
+    let ml_dsa_sign = session.ml_dsa_keypair.sign(&sign_part);
+    let ed_sign = session.ed25519_keypair.secret.sign(&sign_part);
+
+    packet.extend_from_slice(&header);
+    packet.extend_from_slice(&ed_sign.to_bytes());        // 64B
+    packet.extend_from_slice(ml_dsa_sign.bytes());        // 4595B
+    packet.extend_from_slice(&sign_part);
+
+               
+
+    packet
+}
+
+fn create_atomic_key_packet(id: u64) -> Vec<u8> {
+    let mut packet: Vec<u8> = Vec::new();
+    let mut header = [0u8; PACKET_HEADER_SIZE];
+    header[0] = 4; // "first auth" tag
 
     let mut rng = OsRng;
     let kyber_keypair = kyber::kyber1024::keypair(&mut rng, None);
@@ -213,16 +256,15 @@ fn create_ephemeral_key_packet() -> Vec<u8> {
 
     let mut sign_part = Vec::new();
     sign_part.extend_from_slice(kyber_pk);
-    sign_part.extend_from_slice(&ts_bytes);
 
     let ml_dsa_sign = session.ml_dsa_keypair.sign(&sign_part);
     let ed_sign = session.ed25519_keypair.secret.sign(&sign_part);
 
     packet.extend_from_slice(&header);
+    packet.extend_from_slice(&id.to_be_bytes());
     packet.extend_from_slice(&ed_sign.to_bytes());        // 64B
     packet.extend_from_slice(ml_dsa_sign.bytes());        // 4595B
-    packet.extend_from_slice(kyber_pk);                   // 1568B
-    packet.extend_from_slice(&ts_bytes);                  // 8B
+    packet.extend_from_slice(&sign_part);
 
     packet
 }

@@ -1,11 +1,12 @@
+use std::{path::Path, sync::Mutex};
+
 use base64::{Engine, engine::general_purpose};
 use lazy_static::lazy_static;
 use log::{error, info};
 use rand::Rng;
 use serde::Serialize;
 use sqlx::{Pool, Row, Sqlite, sqlite::SqlitePoolOptions};
-use std::path::Path;
-use std::sync::Mutex;
+
 lazy_static! {
     static ref GLOBAL_POOL: Mutex<Option<sqlx::SqlitePool>> = Mutex::new(None);
 }
@@ -13,6 +14,7 @@ lazy_static! {
 lazy_static! {
     pub static ref GLOBAL_OBLIVION_SESSION: Mutex<Option<OblivionSession>> = Mutex::new(None);
 }
+
 #[derive(Debug)]
 pub struct Ed25519Keypair {
     pub public: ed25519_dalek::VerifyingKey,
@@ -54,7 +56,7 @@ impl Profile {
 }
 
 fn encode_bytes(bytes: &Vec<u8>) -> String {
-    general_purpose::STANDARD.encode(bytes)
+    general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 pub fn get_pool() -> Result<Pool<Sqlite>, Box<dyn std::error::Error + Send + Sync>> {
@@ -129,7 +131,7 @@ pub async fn init_db<P: AsRef<Path>>(
     )
     .execute(&pool)
     .await?;
-    
+
     *GLOBAL_POOL.lock().unwrap() = Some(pool.clone());
     info!("Database initialized successfully at {}", db_path.display());
 
@@ -168,7 +170,8 @@ pub async fn create_profile(
     Ok(())
 }
 
-pub async fn get_all_profiles() -> Result<Vec<ProfileExported>, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn get_all_profiles()
+-> Result<Vec<ProfileExported>, Box<dyn std::error::Error + Send + Sync>> {
     let pool = get_pool()?;
 
     let rows = sqlx::query("SELECT userId, username, seed, pwdHash, createdAt FROM profiles")
@@ -186,10 +189,11 @@ pub async fn get_all_profiles() -> Result<Vec<ProfileExported>, Box<dyn std::err
 
     Ok(profiles)
 }
-pub async fn get_current_profile() -> Result<ProfileExported, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn get_current_profile()
+-> Result<ProfileExported, Box<dyn std::error::Error + Send + Sync>> {
     let pool = get_pool()?;
 
-    let session_guard= GLOBAL_OBLIVION_SESSION.lock().unwrap();
+    let session_guard = GLOBAL_OBLIVION_SESSION.lock().unwrap();
     let session = session_guard.as_ref().unwrap();
     let user_id = &session.user_id;
     let row = sqlx::query("SELECT username, createdAt FROM profiles WHERE userId = ?")
@@ -198,17 +202,16 @@ pub async fn get_current_profile() -> Result<ProfileExported, Box<dyn std::error
         .await?;
 
     let username = row.get::<String, _>("username");
-    let created_at= row.get::<String, _>("createdAt");
+    let created_at = row.get::<String, _>("createdAt");
 
     let profile = ProfileExported {
         user_id: encode_bytes(&user_id),
         username,
-        created_at
+        created_at,
     };
 
     Ok(profile)
 }
-
 
 pub async fn load_with_profile(
     user_id: &[u8],
@@ -260,11 +263,10 @@ pub async fn load_with_profile(
 
 pub async fn create_chat(
     dst_user_id: &[u8],
-    chat_name: &str
+    chat_name: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-
     let pool = get_pool()?;
-    let session_guard= GLOBAL_OBLIVION_SESSION.lock().unwrap();
+    let session_guard = GLOBAL_OBLIVION_SESSION.lock().unwrap();
     let session = session_guard.as_ref().unwrap();
     let profile_id = &session.user_id;
     sqlx::query("INSERT INTO chats (idDest, name, idReceiver) VALUES (?, ?, ?)")
@@ -277,19 +279,19 @@ pub async fn create_chat(
     Ok(())
 }
 
-pub async fn get_chats() -> Result<Vec<(Vec<u8>, String)>, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn get_chats() -> Result<Vec<(Vec<u8>, String)>, Box<dyn std::error::Error + Send + Sync>>
+{
     let pool = get_pool()?;
     let session_guard = GLOBAL_OBLIVION_SESSION.lock().unwrap();
     let session = session_guard.as_ref().ok_or("No session available")?;
     let profile_id = &session.user_id;
 
-    // Query all chats for the current profile
-    let rows = sqlx::query("SELECT idDest, name FROM chats WHERE idReceiver = ? ORDER BY updatedAt DESC")
-        .bind(profile_id)
-        .fetch_all(&pool)
-        .await?;
+    let rows =
+        sqlx::query("SELECT idDest, name FROM chats WHERE idReceiver = ? ORDER BY updatedAt DESC")
+            .bind(profile_id)
+            .fetch_all(&pool)
+            .await?;
 
-    // Map results into Vec<(destination_id, chat_name)>
     let chats = rows
         .into_iter()
         .map(|row| {
@@ -300,4 +302,19 @@ pub async fn get_chats() -> Result<Vec<(Vec<u8>, String)>, Box<dyn std::error::E
         .collect();
 
     Ok(chats)
+}
+
+pub async fn chat_exists(user_id: &[u8]) -> Result<bool, Box<dyn std::error::Error>> {
+    let pool = get_pool().expect("Failed to get DB pool");
+    let session_guard = GLOBAL_OBLIVION_SESSION.lock()?;
+    let session = session_guard.as_ref().ok_or("No session available")?;
+    let profile_id = &session.user_id;
+
+    let row = sqlx::query("SELECT 1 FROM chats WHERE idReceiver = ? AND idDest = ? LIMIT 1")
+        .bind(profile_id)
+        .bind(user_id)
+        .fetch_optional(&pool)
+        .await?;
+
+    Ok(if row.is_some() { true } else { false })
 }

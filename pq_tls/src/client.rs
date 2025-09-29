@@ -1,13 +1,21 @@
-use tokio::net::TcpStream;
-
-use tokio::io::{AsyncWriteExt, AsyncReadExt, WriteHalf, ReadHalf};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
 use std::error::Error;
-use tokio::sync::Mutex;
 use std::path::PathBuf;
-use crate::{constants::*, objects::*, utils, settings, crypto};
+use std::sync::Arc;
+
+use log::info;
+
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
+    net::TcpStream,
+    sync::{
+        Mutex,
+        mpsc::{Receiver, Sender, channel},
+    },
+};
+
 use tokio_rustls::client::TlsStream;
+
+use crate::{constants::*, crypto, objects::*, settings, utils};
 
 #[derive(Clone)]
 pub struct PqTlsClient {
@@ -18,7 +26,10 @@ pub struct PqTlsClient {
 }
 
 impl PqTlsClient {
-    pub async fn new(stream: TlsStream<TcpStream>, settings: &mut PqTlsSettings) -> Result<Self, Box<dyn Error>> {
+    pub async fn new(
+        stream: TlsStream<TcpStream>,
+        settings: &mut PqTlsSettings,
+    ) -> Result<Self, Box<dyn Error>> {
         let (mut reader, writer) = tokio::io::split(stream);
         let writer = Arc::new(Mutex::new(writer));
         let client_random = utils::generate_client_random();
@@ -32,11 +43,11 @@ impl PqTlsClient {
 
         // Phase 2: Read Server Hello
         log::info!("Waiting for server hello");
-        
+
         let server_hello = Self::get_server_hello(&mut reader, settings).await?;
         log::info!("Received server hello");
-        
-        let server_random = &server_hello[1 .. 1 + 32];
+
+        let server_random = &server_hello[1..1 + 32];
 
         let pq_sign_pk_size = settings.pq_signing_keys.pk_size();
         let pq_sign_size = settings.pq_signing_keys.sign_size();
@@ -45,21 +56,45 @@ impl PqTlsClient {
         let pq_aka_pk_size = settings.pq_aka_keys.pk_size();
         let c_aka_pk_size = settings.c_aka_keys.pk_size();
 
-        let pq_sign = &server_hello[1 + 32 .. 1 + 32 + pq_sign_size];
-        let c_sign = &server_hello[1 + 32 + pq_sign_size .. 1 + 32 + pq_sign_size + c_sign_size];
-        let pq_sign_pk = &server_hello[1 + 32 + pq_sign_size + c_sign_size .. 1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size];
-        let c_sign_pk = &server_hello[1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size .. 1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size + c_sign_pk_size];
-        let pq_kem_pk = &server_hello[1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size + c_sign_pk_size .. 1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size + c_sign_pk_size + pq_aka_pk_size];
-        let c_aka_pk = &server_hello[1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size + c_sign_pk_size + pq_aka_pk_size .. 1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size + c_sign_pk_size + pq_aka_pk_size + c_aka_pk_size];
+        let pq_sign = &server_hello[1 + 32..1 + 32 + pq_sign_size];
+        let c_sign = &server_hello[1 + 32 + pq_sign_size..1 + 32 + pq_sign_size + c_sign_size];
+        let pq_sign_pk = &server_hello[1 + 32 + pq_sign_size + c_sign_size
+            ..1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size];
+        let c_sign_pk = &server_hello[1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size
+            ..1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size + c_sign_pk_size];
+        let pq_kem_pk =
+            &server_hello[1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size + c_sign_pk_size
+                ..1 + 32
+                    + pq_sign_size
+                    + c_sign_size
+                    + pq_sign_pk_size
+                    + c_sign_pk_size
+                    + pq_aka_pk_size];
+        let c_aka_pk = &server_hello[1
+            + 32
+            + pq_sign_size
+            + c_sign_size
+            + pq_sign_pk_size
+            + c_sign_pk_size
+            + pq_aka_pk_size
+            ..1 + 32
+                + pq_sign_size
+                + c_sign_size
+                + pq_sign_pk_size
+                + c_sign_pk_size
+                + pq_aka_pk_size
+                + c_aka_pk_size];
 
-        let signed_part = &server_hello[1 + 32 + pq_sign_size + c_sign_size .. ];
+        let signed_part = &server_hello[1 + 32 + pq_sign_size + c_sign_size..];
 
-        settings.pq_signing_keys.verify(signed_part, pq_sign_pk, pq_sign)?;
-        settings.c_signing_keys.verify(signed_part, c_sign_pk, c_sign)?;
+        settings
+            .pq_signing_keys
+            .verify(signed_part, pq_sign_pk, pq_sign)?;
+        settings
+            .c_signing_keys
+            .verify(signed_part, c_sign_pk, c_sign)?;
 
         let fingerprint = utils::hash_combined(pq_sign_pk, c_sign_pk);
-
-
 
         let (pq_ct, pq_ss) = settings.pq_aka_keys.encapsulate(pq_kem_pk);
         let (c_aka_p_pk, c_ss) = crypto::decapsulate_x25519(c_aka_pk);
@@ -101,7 +136,7 @@ impl PqTlsClient {
         loop {
             let mut chunk = [0u8; 1024];
             match reader.read(&mut chunk).await {
-                Ok(0) => break, // EOF
+                Ok(0) => break,
                 Ok(n) => buffer.extend_from_slice(&chunk[..n]),
                 Err(_) => break,
             }
@@ -124,16 +159,26 @@ impl PqTlsClient {
         }
     }
 
-    async fn get_server_hello(reader: &mut ReadHalf<TlsStream<TcpStream>>, settings: &PqTlsSettings) -> Result<Vec<u8>, Box<dyn Error>> {
+    async fn get_server_hello(
+        reader: &mut ReadHalf<TlsStream<TcpStream>>,
+        settings: &PqTlsSettings,
+    ) -> Result<Vec<u8>, Box<dyn Error>> {
         let pq_sign_pk_size = settings.pq_signing_keys.pk_size();
         let pq_sign_size = settings.pq_signing_keys.sign_size();
         let c_sign_pk_size = settings.c_signing_keys.pk_size();
         let c_sign_size = settings.c_signing_keys.sign_size();
         let pq_aka_pk_size = settings.pq_aka_keys.pk_size();
         let c_aka_pk_size = settings.c_aka_keys.pk_size();
-        let expected_server_hello_size =  1 + 32 + pq_sign_size + c_sign_size + pq_sign_pk_size + c_sign_pk_size + pq_aka_pk_size + c_aka_pk_size;
+        let expected_server_hello_size = 1
+            + 32
+            + pq_sign_size
+            + c_sign_size
+            + pq_sign_pk_size
+            + c_sign_pk_size
+            + pq_aka_pk_size
+            + c_aka_pk_size;
         let mut server_hello = Vec::new();
-        while server_hello.len() < expected_server_hello_size{
+        while server_hello.len() < expected_server_hello_size {
             let mut chunk = [0u8; 1024];
             match reader.read(&mut chunk).await {
                 Ok(n) if n == 0 => {
@@ -141,8 +186,11 @@ impl PqTlsClient {
                 }
                 Ok(n) => {
                     server_hello.extend_from_slice(&chunk[..n]);
-                    log::info!("Received chunk expected {} now at {}", expected_server_hello_size, server_hello.len());
-
+                    log::info!(
+                        "Received chunk expected {} now at {}",
+                        expected_server_hello_size,
+                        server_hello.len()
+                    );
                 }
                 Err(e) => {
                     return Err(e.into());

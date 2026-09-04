@@ -47,7 +47,6 @@ macro_rules! define_kem {
     };
 }
 
-// invoke for all your non‐McEliece KEMs:
 define_kem!(struct Hqc256Keypair,    mod hqc256);
 define_kem!(struct Hqc192Keypair,    mod hqc192);
 define_kem!(struct Hqc128Keypair,    mod hqc128);

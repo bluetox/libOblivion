@@ -36,7 +36,6 @@ lazy_static! {
 use std::sync::Arc;
 pub struct SafeJavaVM(pub JavaVM);
 
-// Assert thread-safety for JavaVM (this is OK in practice: JavaVM is a VM handle)
 unsafe impl Send for SafeJavaVM {}
 unsafe impl Sync for SafeJavaVM {}
 lazy_static! {
@@ -193,7 +192,6 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_getChats(
     }
     let chats_json = match res {
         Ok(chats) => {
-            // Convert each chat to a serializable struct
             #[derive(serde::Serialize)]
             struct ChatExport {
                 dest_id_b64: String,
@@ -216,7 +214,6 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_getChats(
         }
     };
 
-    // Return as Java string
     env.new_string(chats_json)
         .expect("Failed to create jstring")
         .into_raw()
@@ -288,7 +285,6 @@ pub extern "system" fn Java_com_example_oblivion_RustBridge_sendMessage(
                     info!("Chat created in DB");
                 };
             }
-            // Request the keypackage
             info!("Requesting keypackage");
             network::LISTENER_STOP.notify_waiters();
             

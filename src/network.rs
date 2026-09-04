@@ -138,7 +138,6 @@ pub fn init_connexion(env: &mut JNIEnv) -> jint {
     use jni::AttachGuard;
 
     TOKIO_RT.spawn({
-        // Clone the Arc once, outside the async block
         let jvm_arc_opt = {
             let guard = JVM.lock().unwrap();
             guard.as_ref().map(Arc::clone)
@@ -193,7 +192,7 @@ pub fn init_connexion(env: &mut JNIEnv) -> jint {
     return 0;
 }
 use crate::notify_new_message;
-const PACKET_HEADER_BYTE: u8 = 1; // or whatever constant you use
+const PACKET_HEADER_BYTE: u8 = 1;
 const PACKET_HEADER_SIZE: usize = 3;
 
 /// === AUTH PACKET ===
@@ -208,7 +207,6 @@ pub fn create_auth_packet() -> Vec<u8> {
     let ed_pk = session.ed25519_keypair.public.as_bytes();
     let ml_dsa_pk = session.ml_dsa_keypair.public();
 
-    // what is being signed
     let mut sign_part = Vec::new();
     sign_part.extend_from_slice(ed_pk);
     sign_part.extend_from_slice(ml_dsa_pk);

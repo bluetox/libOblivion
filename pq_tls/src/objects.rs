@@ -483,7 +483,6 @@ impl CAKAKeys {
                 let arr: [u8; 32] = pk.try_into().expect("Failed to convert slice to array");
                 let public_key = X25519PublicKey::from(arr);
 
-                // Move secret out of x25519 to use diffie_hellman
                 let secret = std::mem::replace(&mut x25519.secret, EphemeralSecret::random_from_rng(rand::rngs::OsRng));
 
                 secret.diffie_hellman(&public_key).as_ref().to_vec()
